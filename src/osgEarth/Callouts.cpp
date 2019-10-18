@@ -24,6 +24,7 @@
 #include <osgEarth/GLUtils>
 #include <osg/Depth>
 #include <osgUtil/CullVisitor>
+#include <climits>
 
 using namespace osgEarth;
 using namespace osgEarth::Contrib;
