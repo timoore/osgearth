@@ -43,21 +43,24 @@ using namespace osgEarth::Drivers;
    that contain them, a relation that is lost by OGR.
 
    Optionally this filter calculates a "heading" attribute for each
-   point, which is the average (half-vector) of lines entering them.
+   point, which is the rotation around Z of the "tangent" of the
+   linestring at the point.
  */
 
 struct PointEntry
 {
-    PointEntry() {}
-    PointEntry(Feature* feature) : pointFeature(feature) {}
+    PointEntry() : previous(DBL_MAX, DBL_MAX, DBL_MAX), next(DBL_MAX, DBL_MAX, DBL_MAX) {}
+    PointEntry(Feature* feature) : PointEntry(), pointFeature(feature) {}
     osg::ref_ptr<Feature> pointFeature;
     FeatureList lineFeatures;
     std::vector<osg::Vec2d> neighbors;
+    osg::Vec3d previous;
+    osg::Vec3d next;
 };
 
 typedef std::map<osg::Vec2d, PointEntry> PointMap;
 
-double calculateGeometryHeading(const osg::Vec2d& point, const std::vector<osg::Vec2d>& neighbors,
+double calculateGeometryHeading(const osg::Vec2d& point, const osg::Vec3d& previous, const osg::Vec3d& next,
                                 FilterContext& context)
 {
     const SpatialReference* targetSRS = nullptr;
@@ -70,9 +73,6 @@ double calculateGeometryHeading(const osg::Vec2d& point, const std::vector<osg::
         targetSRS = context.profile()->getSRS()->getGeocentricSRS();
     }
     osg::Vec3d point3d(point, 0.0);
-    std::vector<osg::Vec3d> neighbor3d(neighbors.size());
-    std::transform(neighbors.begin(), neighbors.end(), neighbor3d.begin(),
-                   [](osg::Vec2d& in) { return osg::Vec3d(in, 0.0); });
 
     osg::Matrixd orientation;
     osg::Vec3d world3d;
@@ -82,37 +82,35 @@ double calculateGeometryHeading(const osg::Vec2d& point, const std::vector<osg::
     // XXX OSG bug weirdness
     osg::Matrixd toLocal(orientation);
     toLocal.transpose3x3(toLocal);
-    std::vector<osg::Vec3d> neighborWorld(neighbors.size());
-
-    for (int i = 0; i < neighbors.size(); ++i)
+    
+    osg::Vec2d in;
+    osg::Vec2d out;
+    if (previous.x() != DBL_MAX)
     {
-        ECEF::transformAndLocalize(neighbor3d[i], context.profile()->getSRS(), neighborWorld[i],
+        osg::Vec3d prevWorld;
+        ECEF::transformAndLocalize(previous, context.profile()->getSRS(), prevWorld,
                                    targetSRS);
-    }
-    osg::Vec3d halfVec(0.0, 0.0, 0.0);
-    for (osg::Vec3d& neighWorld : neighborWorld)
-    {
-        osg::Vec3d directionWorld = neighWorld - world3d;
-        osg::Vec3d direction = directionWorld * toLocal;
-        direction.z() = 0.0;
-        direction.normalize();
-        halfVec += direction;
-    }
-    // The half vector points "half way" between the in and
-    // out vectors. If they are parallel, then it will have 0
-    // length.
-    double heading;
-    double halfLen = half.normalize();
-    if (osg::equivalent(halfLen, 0.0))
-    {
+        osg::Vec3d inWorld = world3d - prevWorld;
+        osg::Vec3d inLocal = inWorld * toLocal;
+        in.x() = inLocal.x();
+        in.y() = inLocal.y();
+        in.normalize();
         
     }
-    else
+    if (next.x() != DBL_MAX)
     {
-        // Heading we want is rotated 90 degrees from half vector
-        heading = std::atan2(-halfVec[1], -halfVec[0]);
-     
+        osg::Vec3d nextWorld;
+        ECEF::transformAndLocalize(next, context.profile()->getSRS(), nextWorld,
+                                   targetSRS);
+        osg::Vec3d outWorld = nextWorld - world3d;
+        osg::Vec3d outLocal = inWorld * toLocal;
+        out.x() = outLocal.x();
+        out.y() = outLocal.y();
+        out.normalize();
     }
+
+    osg::Vec2d direction = in + out;
+    heading = std::atan2(-direction.x(), direction.y());
     return osg::RadiansToDegrees(heading);
 }
 
@@ -166,14 +164,12 @@ public:
                         point.lineFeatures.push_back(feature);
                         if (i > 0)
                         {
-                            point.neighbors.push_back(osg::Vec2d((*geom)[i - 1].x(),
-                                                                 (*geom)[i - 1].y()));
+                            point.previous = osg::Vec3d((*geom)[i - 1].x(), (*geom)[i - 1].y(), 0.0);
             
                         }
                         if (i < size - 1)
                         {
-                            point.neighbors.push_back(osg::Vec2d((*geom)[i + 1].x(),
-                                                                 (*geom)[i + 1].y()));
+                            point.next = osg::Vec3d((*geom)[i + 1].x(), (*geom)[i + 1].y(), 0.0);
                         }
                     }
                 }
@@ -185,14 +181,15 @@ public:
             Feature* pointFeature = entry.pointFeature.get();
             for (auto& lineFeature : entry.lineFeatures)
             {
-                const AttributeTable& attrTable = lineFeature->getAttrs())
+                const AttributeTable& attrTable = lineFeature->getAttrs();
                 for (const auto& attrEntry : attrTable)
                 {
                     pointFeature->set(attrEntry.first, attrEntry.second);
                 }
             }
-            
         }
+        pointFeature->set("heading", calculateGeometryHeading(kv.first, pointFeature.previous, pointFeature.next,
+                                                              context));
         return context;
     }
 
