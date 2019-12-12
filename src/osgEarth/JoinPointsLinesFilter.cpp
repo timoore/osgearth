@@ -16,7 +16,7 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
-#include "JoinPointsLinesFilterOptions"
+#include <osgEarth/JoinPointsLinesFilter>
 
 #include <osgEarth/Filter>
 #include <osgEarth/FeatureCursor>
@@ -28,14 +28,13 @@
 #include <osgEarth/FeatureSource>
 #include <osgEarth/FilterContext>
 #include <osgEarth/Geometry>
-
+#include <osgEarth/ECEF>
 #include <map>
 #include <algorithm>
 
 #define LC "[JointPointsLines FeatureFilter] "
 
 using namespace osgEarth;
-using namespace osgEarth::Drivers;
 
 /**
    Add features from line strings to point features that make up their
@@ -49,8 +48,10 @@ using namespace osgEarth::Drivers;
 
 struct PointEntry
 {
-    PointEntry() : previous(DBL_MAX, DBL_MAX, DBL_MAX), next(DBL_MAX, DBL_MAX, DBL_MAX) {}
-    PointEntry(Feature* feature) : PointEntry(), pointFeature(feature) {}
+    PointEntry(Feature* feature)
+        : pointFeature(feature), previous(DBL_MAX, DBL_MAX, DBL_MAX), next(DBL_MAX, DBL_MAX, DBL_MAX)
+        {}
+    PointEntry() : PointEntry(nullptr) {}
     osg::ref_ptr<Feature> pointFeature;
     FeatureList lineFeatures;
     std::vector<osg::Vec2d> neighbors;
@@ -103,118 +104,114 @@ double calculateGeometryHeading(const osg::Vec2d& point, const osg::Vec3d& previ
         ECEF::transformAndLocalize(next, context.profile()->getSRS(), nextWorld,
                                    targetSRS);
         osg::Vec3d outWorld = nextWorld - world3d;
-        osg::Vec3d outLocal = inWorld * toLocal;
+        osg::Vec3d outLocal = outWorld * toLocal;
         out.x() = outLocal.x();
         out.y() = outLocal.y();
         out.normalize();
     }
 
     osg::Vec2d direction = in + out;
-    heading = std::atan2(-direction.x(), direction.y());
+    double heading = std::atan2(-direction.x(), direction.y());
     return osg::RadiansToDegrees(heading);
 }
 
-class JoinPointsLinesFilter : public FeatureFilter, public JoinPointsLinesFilterOptions
+Status JoinPointsLinesFilter::initialize(const osgDB::Options* readOptions)
 {
-public:
-    JoinPointsLinesFilter(const ConfigOptions& options)
-        : FeatureFilter(), JoinPointsLinesFilterOptions(options)
-    {
-    }
+    Status fsStatus = _lineSource.open(lineSource(), readOptions);
+    if (fsStatus.isError())
+        return fsStatus;
 
-public:
-    Status initialize(const osgDB::Options* readOptions)
-    {
-        return Status::OK();
-    }
+    return Status::OK();
+}
 
-    FilterContext push(FeatureList& input, FilterContext& context)
+void JoinPointsLinesFilter::getLineFeatures(const GeoExtent& extent, FeatureList& features)
+{
+    FeatureSource* fs = _lineSource.getLayer();
+    if (!fs)
+        return;
+
+    //TODO: should this be Profile::transformAndClampExtent instead?
+    GeoExtent localExtent = extent.transform( fs->getFeatureProfile()->getSRS() );
+    Query query;
+    query.bounds() = localExtent.bounds();
+    if (localExtent.intersects( fs->getFeatureProfile()->getExtent()))
     {
-        PointMap pointMap;
+        osg::ref_ptr< FeatureCursor > cursor = fs->createFeatureCursor( query, nullptr );
+        while (cursor->hasMore())
+        {
+            Feature* feature = cursor->nextFeature();
+            if (feature->getGeometry()->getType() == Geometry::TYPE_LINESTRING)
+            {
+                features.push_back(feature);
+            }
+        }
+    }     
+}
+FilterContext JoinPointsLinesFilter::push(FeatureList& input, FilterContext& context)
+{
+    PointMap pointMap;
         
-        for (auto pFeature : input)
+    for (auto& feature : input)
+    {
+        Geometry* geom = feature->getGeometry();
+        if (geom->getType() == Geometry::TYPE_POINTSET)
         {
-            Feature* feature = pFeature.get();
-            Geometry* geom = feature->getGeometry();
-            if (geom->getType() == Geometry::TYPE_POINTSET)
+            // Are there multiple points? Does it matter?
+            for (osg::Vec3d& pt : *geom)
             {
-                // Are there multiple points? Does it matter?
-                for (osg::Vec3d& pt : *geom)
-                {
-                    osg::Vec2d key(pt.x(), pt.y());
-                    pointMap[key] = PointEntry(feature);
-                }
+                osg::Vec2d key(pt.x(), pt.y());
+                pointMap[key] = PointEntry(feature);
             }
         }
-
-        for (auto pFeature : input)
+    }
+#if 0
+    FeatureList lines;
+    getLineFeatures(context.extent().get(), lines);
+#endif
+    for (auto& feature : input)
+    {
+        Geometry* geom = feature->getGeometry();
+        if (geom->getType() != Geometry::TYPE_LINESTRING)
+            continue;
+        const int size = geom->size();
+        for (int i = 0; i < size; ++i)
         {
-            Feature* feature = pFeature.get();
-            Geometry* geom = feature->getGeometry();
-            if (geom->getType() == Geometry::TYPE_LINESTRING)
+            osg::Vec2d key((*geom)[i].x(), (*geom)[i].y());
+            auto ptItr = pointMap.find(key);
+            if (ptItr != pointMap.end())
             {
-                const int size = geom->size();
-                for (int i = 0; i < size; ++i)
+                PointEntry &point = ptItr->second;
+                point.lineFeatures.push_back(feature);
+                if (i > 0)
                 {
-                    osg::Vec2d key((*geom)[i].x(), (*geom)[i].y());
-                    auto ptItr = pointMap.find(key);
-                    if (ptItr != pointMap.end())
-                    {
-                        PointEntry &point = ptItr->second;
-                        point.lineFeatures.push_back(feature);
-                        if (i > 0)
-                        {
-                            point.previous = osg::Vec3d((*geom)[i - 1].x(), (*geom)[i - 1].y(), 0.0);
+                    point.previous = osg::Vec3d((*geom)[i - 1].x(), (*geom)[i - 1].y(), 0.0);
             
-                        }
-                        if (i < size - 1)
-                        {
-                            point.next = osg::Vec3d((*geom)[i + 1].x(), (*geom)[i + 1].y(), 0.0);
-                        }
-                    }
+                }
+                if (i < size - 1)
+                {
+                    point.next = osg::Vec3d((*geom)[i + 1].x(), (*geom)[i + 1].y(), 0.0);
                 }
             }
         }
-        for (auto& kv : pointMap)
+    }
+    for (auto& kv : pointMap)
+    {
+        PointEntry& entry = kv.second;
+        Feature* pointFeature = entry.pointFeature.get();
+        for (auto& lineFeature : entry.lineFeatures)
         {
-            PointEntry& entry = kv.second;
-            Feature* pointFeature = entry.pointFeature.get();
-            for (auto& lineFeature : entry.lineFeatures)
+            const AttributeTable& attrTable = lineFeature->getAttrs();
+            for (const auto& attrEntry : attrTable)
             {
-                const AttributeTable& attrTable = lineFeature->getAttrs();
-                for (const auto& attrEntry : attrTable)
+                if (attrEntry.first[0] != '@' && !pointFeature->hasAttr(attrEntry.first))
                 {
                     pointFeature->set(attrEntry.first, attrEntry.second);
                 }
             }
         }
-        pointFeature->set("heading", calculateGeometryHeading(kv.first, pointFeature.previous, pointFeature.next,
+        pointFeature->set("heading", calculateGeometryHeading(kv.first, entry.previous, entry.next,
                                                               context));
-        return context;
     }
 
-    class JoinFeatureFilterPlugin : public FeatureFilterDriver
-{
-public:
-    JoinFeatureFilterPlugin() : FeatureFilterDriver()
-    {
-        this->supportsExtension("osgearth_featurefilter_join", className() );
-    }
-    
-    const char* className() const
-    {
-        return "JoinFeatureFilterPlugin";
-    }
-
-    ReadResult readObject(const std::string& file_name, const Options* options) const
-    {
-        if ( !acceptsExtension(osgDB::getLowerCaseFileExtension( file_name )))
-            return ReadResult::FILE_NOT_HANDLED;
-
-        return new JoinFeatureFilter( getConfigOptions(options) );
-    }
-};
-
-REGISTER_OSGPLUGIN(osgearth_featurefilter_join, JoinFeatureFilterPlugin);
-
-};
+    return context;
+}
