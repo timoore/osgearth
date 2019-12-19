@@ -22,6 +22,7 @@
 #include <osgEarth/JoinPointsLinesFilter>
 #include <osgEarth/ElevationQuery>
 #include <osgEarth/PolygonizeLines>
+#include <osgEarth/ECEF>
 
 using namespace osgEarth;
 
@@ -145,20 +146,32 @@ namespace
                 eq.getElevations(geom->asVector(), feature->getSRS(), elevations);
                 std::vector<osg::Vec3d> worldPts(geom->size());
                 std::vector<osg::Matrixd> orientations(geom->size());
-                for (int i = 0; i < geodeticPts.size(); ++i)
+                for (int i = 0; i < geom->size(); ++i)
                 {
                     osg::Vec3d geodeticPt((*geom)[i].x(), (*geom)[i].y(), elevations[i]);
                     ECEF::transformAndGetRotationMatrix(geodeticPt, cx.profile()->getSRS(), worldPts[i],
                                                         targetSRS, orientations[i]);
                 }
-                
+                // New feature for the cable
+                const int size = geom->size();
                 Feature* newFeature = new Feature(*feature);
-                Geometry* newGeom = newFeature->getGeometry();
-                const int size = newGeom->size();
+                LineString* newGeom = new LineString(size);
+
                 for (int i = 0; i < size; ++i)
                 {
-                    (*newGeom)[i].z() = elevations[i] + 14.16;
+                    double heading = 0.0;
+                    auto itr = findPoint(pointMap, (*geom)[i]);
+                    if (itr != pointMap.end())
+                    {
+                        heading = itr->second.pointFeature->getDouble("heading", 0.0);
+                    }
+                    osg::Matrixd headingMat;
+                    headingMat.makeRotate(osg::DegreesToRadians(heading), osg::Vec3d(0.0, 0.0, 1.0));
+                    osg::Vec3d attach(5.876, 0.0, 14.162);
+                    (*newGeom)[i] = attach * headingMat * orientations[i] + worldPts[i];
                 }
+                newFeature->setGeometry(newGeom);
+                newFeature->setSRS(targetSRS);
                 result.push_back(newFeature);
             }
         }

@@ -96,11 +96,11 @@ namespace osgEarth { namespace Util
     };
 
     typedef std::map<osg::Vec2d, PointEntry> PointMap;
-    PointEntry& getPoint(PointMap& map, const osg::Vec3d& coord)
+    inline PointEntry& getPoint(PointMap& map, const osg::Vec3d& coord)
     {
         return map[osg::Vec2d(coord.x(), coord.y())];
     }
-    PointMap::iterator findPoint(PointMap& map, const osg::Vec3d& coord)
+    inline PointMap::iterator findPoint(PointMap& map, const osg::Vec3d& coord)
     {
         return map.find(osg::Vec2d(coord.x(), coord.y()));
     }
