@@ -168,10 +168,12 @@ namespace
                     osg::Matrixd headingMat;
                     headingMat.makeRotate(osg::DegreesToRadians(heading), osg::Vec3d(0.0, 0.0, 1.0));
                     osg::Vec3d attach(5.876, 0.0, 14.162);
-                    (*newGeom)[i] = attach * headingMat * orientations[i] + worldPts[i];
+                    osg::Vec3d worldAttach = attach * headingMat * orientations[i] + worldPts[i];
+                    osg::Vec3d mapAttach;
+                    ECEF::transformAndLocalize(worldAttach, targetSRS, mapAttach, cx.profile()->getSRS());
+                    newGeom->push_back(mapAttach);
                 }
                 newFeature->setGeometry(newGeom);
-                newFeature->setSRS(targetSRS);
                 result.push_back(newFeature);
             }
         }
