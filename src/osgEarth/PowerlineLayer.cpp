@@ -134,7 +134,7 @@ namespace
         }
         else
         {
-            targetSRS = cx.profile()->getSRS()->getGeocentricSRS();
+            targetSRS = featureSRS->getGeocentricSRS();
         }
         
         for (auto& feature : powerFeatures)
@@ -149,32 +149,38 @@ namespace
                 for (int i = 0; i < geom->size(); ++i)
                 {
                     osg::Vec3d geodeticPt((*geom)[i].x(), (*geom)[i].y(), elevations[i]);
-                    ECEF::transformAndGetRotationMatrix(geodeticPt, cx.profile()->getSRS(), worldPts[i],
+                    ECEF::transformAndGetRotationMatrix(geodeticPt, featureSRS, worldPts[i],
                                                         targetSRS, orientations[i]);
                 }
                 // New feature for the cable
                 const int size = geom->size();
-                Feature* newFeature = new Feature(*feature);
-                LineString* newGeom = new LineString(size);
-
-                for (int i = 0; i < size; ++i)
+                const osg::Vec3d attach[] = {{5.876, 0.0, 14.162}, {-5.876, 0.0, 14.162}};
+                for (int cable = 0; cable < 2; ++cable)
                 {
-                    double heading = 0.0;
-                    auto itr = findPoint(pointMap, (*geom)[i]);
-                    if (itr != pointMap.end())
+                    Feature* newFeature = new Feature(*feature);
+                    LineString* newGeom = new LineString(size);
+
+                    for (int i = 0; i < size; ++i)
                     {
-                        heading = itr->second.pointFeature->getDouble("heading", 0.0);
+                        double heading = 0.0;
+                        auto itr = findPoint(pointMap, (*geom)[i]);
+                        if (itr != pointMap.end())
+                        {
+                            heading = itr->second.pointFeature->getDouble("heading", 0.0);
+                        }
+                        osg::Matrixd headingMat;
+                        headingMat.makeRotate(osg::DegreesToRadians(heading), osg::Vec3d(0.0, 0.0, 1.0));
+                        osg::Vec3d worldAttach = attach[cable] * headingMat * orientations[i] + worldPts[i];
+                        osg::Vec3d wgs84; // intermediate point
+                        osg::Vec3d mapAttach;
+                        featureSRS->getGeographicSRS()->transformFromWorld(worldAttach, wgs84);
+                        featureSRS->getGeographicSRS()->transform(wgs84, featureSRS, mapAttach);
+                        newGeom->push_back(mapAttach);
                     }
-                    osg::Matrixd headingMat;
-                    headingMat.makeRotate(osg::DegreesToRadians(heading), osg::Vec3d(0.0, 0.0, 1.0));
-                    osg::Vec3d attach(5.876, 0.0, 14.162);
-                    osg::Vec3d worldAttach = attach * headingMat * orientations[i] + worldPts[i];
-                    osg::Vec3d mapAttach;
-                    ECEF::transformAndLocalize(worldAttach, targetSRS, mapAttach, cx.profile()->getSRS());
-                    newGeom->push_back(mapAttach);
+                    newFeature->setGeometry(newGeom);
+                    result.push_back(newFeature);
                 }
-                newFeature->setGeometry(newGeom);
-                result.push_back(newFeature);
+
             }
         }
         return result;
