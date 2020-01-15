@@ -23,6 +23,7 @@
 #include <osgEarth/ElevationQuery>
 #include <osgEarth/PolygonizeLines>
 #include <osgEarth/ECEF>
+#include <osgEarth/GeometryUtils>
 
 using namespace osgEarth;
 
@@ -44,9 +45,16 @@ PowerlineLayer::Options::Options(const ConfigOptions& options)
     fromConfig(_conf);
 }
 
+// XXX cropFeatures is required to be true in order to include line
+// features using their extent instead of their centroid. What we
+// really want is to include line features by extent without cropping
+// them.
 void PowerlineLayer::Options::fromConfig(const Config& conf)
 {
     LayerClient<FeatureSource>::fromConfig(conf, "line_features", _lineSourceLayer, _lineSource);
+    FeatureDisplayLayout layout = _layout.get();
+    layout.cropFeatures() = true;
+    _layout = layout;
 }
 
 Config
@@ -66,18 +74,41 @@ void PowerlineLayer::Options::mergeConfig(const Config& conf)
 class PowerlineFeatureNodeFactory : public GeomFeatureNodeFactory
 {
 public:
-    PowerlineFeatureNodeFactory(const PowerlineLayer::Options& options)
-        : GeomFeatureNodeFactory(options),
-          _lineSourceLayer(options.lineSourceLayer().get()),
-          _lineSource(options.lineSource().get())
-        {}
+    PowerlineFeatureNodeFactory(const PowerlineLayer::Options& options);
     bool createOrUpdateNode(FeatureCursor* cursor, const Style& style,
                             const FilterContext& context,
                             osg::ref_ptr<osg::Node>& node);
 private:
+    FeatureList makeCableFeatures(FeatureList& powerFeatures, FeatureList& towerFeatures,
+                                  const FilterContext& cx);
     std::string _lineSourceLayer;
     FeatureSource::Options _lineSource;
+    osg::ref_ptr<Geometry> _attachments;
+    std::string _modelName;
 };
+
+PowerlineFeatureNodeFactory::PowerlineFeatureNodeFactory(const PowerlineLayer::Options& options)
+    : GeomFeatureNodeFactory(options),
+      _lineSourceLayer(options.lineSourceLayer().get()),
+      _lineSource(options.lineSource().get())
+{
+    if (!options.getConfig().hasChild("tower_models"))
+        return;
+    Config modelsConf = options.getConfig().child("tower_models");
+    ConfigSet models = modelsConf.children("tower_model");
+    if (models.empty())
+        return;
+    // Just use first model for now
+    Config model = models.front();
+    if (model.hasChild("attachment_points"))
+    {
+        _attachments = GeometryUtils::geometryFromWKT(model.child("attachment_points").value());
+    }
+    if (model.hasChild("model"))
+    {
+        _modelName = model.child("model").value();
+    }
+}
 
 FeatureNodeFactory*
 PowerlineLayer::createFeatureNodeFactoryImplementation() const
@@ -180,11 +211,12 @@ namespace
                     newFeature->setGeometry(newGeom);
                     result.push_back(newFeature);
                 }
-
             }
+
+
         }
-        return result;
     }
+    return result;
 }
 
 bool PowerlineFeatureNodeFactory::createOrUpdateNode(FeatureCursor* cursor, const Style& style,
