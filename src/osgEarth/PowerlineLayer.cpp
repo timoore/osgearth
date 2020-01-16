@@ -51,7 +51,7 @@ PowerlineLayer::Options::Options(const ConfigOptions& options)
 // them.
 void PowerlineLayer::Options::fromConfig(const Config& conf)
 {
-    LayerClient<FeatureSource>::fromConfig(conf, "line_features", _lineSourceLayer, _lineSource);
+    LayerReference<FeatureSource>::get(conf, "line_features", _lineSourceLayer, _lineSource);
     FeatureDisplayLayout layout = _layout.get();
     layout.cropFeatures() = true;
     _layout = layout;
@@ -61,7 +61,7 @@ Config
 PowerlineLayer::Options::getConfig() const
 {
     Config conf = FeatureModelLayer::Options::getConfig();
-    LayerClient<FeatureSource>::getConfig(conf, "line_features", _lineSourceLayer, _lineSource);
+    LayerReference<FeatureSource>::set(conf, "line_features", _lineSourceLayer, _lineSource);
     return conf;
 }
 

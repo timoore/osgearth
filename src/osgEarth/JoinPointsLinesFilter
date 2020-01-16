@@ -45,8 +45,8 @@ namespace osgEarth { namespace Util
     public:
         Config getConfig() const {
             Config conf = ConfigOptions::getConfig();
-            conf.key() = "join";
-            LayerClient<FeatureSource>::getConfig(conf, "line_features", lineSourceLayer(), lineSource());
+            conf.key() = "join_points_lines";
+            LayerReference<FeatureSource>::set(conf, "line_features", lineSourceLayer(), lineSource());
             return conf;
         }
 
@@ -58,7 +58,7 @@ namespace osgEarth { namespace Util
 
     private:
         void fromConfig( const Config& conf ) {
-            LayerClient<FeatureSource>::fromConfig(conf, "line_features", lineSourceLayer(), lineSource());
+            LayerReference<FeatureSource>::get(conf, "line_features", lineSourceLayer(), lineSource());
         }
 
         optional<std::string>            _lineLayerName;
@@ -68,7 +68,7 @@ namespace osgEarth { namespace Util
     class JoinPointsLinesFilter : public FeatureFilter, public JoinPointsLinesFilterOptions
     {
     private:
-        LayerClient<FeatureSource> _lineSource;
+        LayerReference<FeatureSource> _lineSource;
     public:
         JoinPointsLinesFilter(const ConfigOptions& options = ConfigOptions())
             : FeatureFilter(), JoinPointsLinesFilterOptions(options)
