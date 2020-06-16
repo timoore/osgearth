@@ -21,6 +21,7 @@
 
 #include "Common"
 #include "MaskGenerator"
+#include "MeshEditor"
 #include <osgEarth/TerrainOptions>
 #include <osgEarth/TileKey>
 #include <osgEarth/ThreadingUtils>

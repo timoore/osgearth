@@ -1,0 +1,494 @@
+/* -*-c++-*- */
+/* osgEarth - Geospatial SDK for OpenSceneGraph
+* Copyright 2020 Pelican Mapping
+* http://osgearth.org
+*
+* osgEarth is free software; you can redistribute it and/or modify
+* it under the terms of the GNU Lesser General Public License as published by
+* the Free Software Foundation; either version 2 of the License, or
+* (at your option) any later version.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+* IN THE SOFTWARE.
+*
+* You should have received a copy of the GNU Lesser General Public License
+* along with this program.  If not, see <http://www.gnu.org/licenses/>
+*/
+
+#ifndef OSGEARTHUTIL_WINGED_EDGE_MESH_H
+#define OSGEARTHUTIL_WINGED_EDGE_MESH_H 1
+
+#include <osgEarth/Common>
+#include <osgEarth/Math>
+#include <algorithm>
+#include <vector>
+#include <set>
+#include <osg/Vec3>
+#include <osg/Geometry>
+
+    //! The vertices are stored rotated into the XY plane so that we can properly find
+    //! the "bottom-most" vert and walk the boundary.
+namespace osgEarth { namespace Util
+{
+    struct Empty
+    {
+    };
+    template<typename Coord, typename V = Empty, typename E = Empty, typename F = Empty>
+    class OSGEARTH_EXPORT WingedEdgeMesh : public osg::Object
+    {
+    public:
+        class Edge;
+        class Face;
+
+        //! Represents a single vertex in the topology graph
+        class Vertex : public V
+        {
+            Vertex(Edge* e = nullptr)
+            {
+                if (e)
+                {
+                    edges.push_back(e);
+                }
+            }
+            // All Edge objects that has this vertex as the starting vertex (origVert)
+            std::vector<Edge*> edges;
+        };
+
+        struct Face : public F
+        {
+            Face(Edge* e = nullptr)
+                : edge(e)
+            {
+            }
+            // An edge that is adjacent to this face
+            Edge* edge;
+        };
+
+        struct VertexCmp
+        {
+            bool operator()(const Coord& lhs, const Coord& rhs) const
+            {
+                if (lhs.x() < rhs.x())
+                    return true;
+                else if (lhs.x() > rhs.x())
+                    return false;
+                else
+                    return lhs.y() < rhs.y();
+            }
+        };
+        
+        //! One or more Vertex objects
+        typedef std::map<Vec3, Vertex, VertexCmp> VertexMap;
+
+        //! Iterator into a VertexMap, which serves as the "pointer to
+        //! Vertex"
+        typedef VertexMap::iterator VIndex;
+        
+
+        VIndex getVertex(const Coord& position)
+        {
+            return vertices.insert(Vertex()).first;
+        }
+        // Half Edges surround faces in counter-clockwise order
+        // The vertices are in order for the left face
+        struct Edge : public E
+        {
+            Edge(VIndex &vOrig, VIndex& vDest)
+                : mate(nullptr)
+            {
+                v[0] = vOrig;
+                v[1] = vDest;
+                f = nullptr;
+                e[0] = nullptr;
+                e[1] = nullptr;
+            }
+            VIndex v[2];
+            // left face
+            Face* f;
+            // edges - prev, next edge on left face
+            Edge* e[2]
+            VIndex& origVert()
+            {
+                return v[0];
+            }
+            VIndex origVert() const
+            {
+                return v[0];
+            }
+            VIndex& destVert()
+            {
+                return v[1];
+            }
+            VIndex destVert() const
+            {
+                return v[1];
+            }
+            Edge*& prevEdge()
+            {
+                return e[0];
+            }
+            Edge* prevEdge() const
+            {
+                return e[0];
+            }
+            Edge*& nextEdge()
+            {
+                return e[1];
+            }
+            Edge* nextEdge() const
+            {
+                return e[1];
+            }
+            // The half edge running in the other direction
+            Edge* mate;
+        };
+
+        Edge* newEdge(VIndex& vOrig, VIndex& vDest)
+        {
+            edges.push_back(new Edge(vOrig, vDest));
+            return edges.back();
+        }
+
+        Face* newFace(Edge* edge = nullptr)
+        {
+            faces.push_back(new Face(edge));
+            return faces.back();
+        }
+
+        ~WingedEdgeMesh()
+        {
+            for (auto edge : edges)
+            {
+                delete edge;
+            }
+            for (auto face :faces)
+            {
+                delete face;
+            }
+        }
+        VertexMap vertices;
+        std::vector<Edge*> edges;
+        std::vector<Face*> faces;
+
+        const Coord& coordinate(const VIndex& vIndex)
+        {
+            return vIndex->first;
+        }
+
+        Vertex& vertex(const VIndex& vIndex)
+        {
+            return vIndex->second;
+        }
+    
+        template<typename VItr>
+        Face* addFace(VItr begin, VItr end)
+        {
+            Face* f = newFace();
+            Edge* firstEdge = nullptr, prevEdge = nullptr;
+            VItr first = begin;
+            // Set v0Itr to last vertec in new face
+            VItr v0Itr = end - 1, v1Itr = first;
+            for (; v1Itr != end; v0Itr = v1Itr++)
+            {
+                Edge* e = newEdge(*v0Itr, *v1Itr);
+                if (!f->edge)
+                {
+                    f->edge = e;
+                }
+                e->face = f;
+                // Search for the matching half-edge. It's origin will be
+                // this edge's destination.
+                auto mateEdgeItr = std::find_if(v1Itr->edges.begin(), v1Itr->edges.end(),
+                                                [&v0Itr](const auto& vertEdge)
+                                                {
+                                                    return *v0Itr == vertEdge.destVert();
+                                                });
+                if (mateEdgeItr != v1Itr->edges.end())
+                {
+                    e->mate = *mateEdgeItr;
+                    mateEdgeItr->mate = e;
+                }
+                if (!firstEdge)
+                {
+                    firstEdge = e;
+                }
+                if (prevEdge)
+                {
+                    e->prevEdge() = prevEdge;
+                    prevEdge->nextEdge() = e;
+                }
+                if (v1Itr + 1 = end)
+                {
+                    e->nextEdge() = firstEdge;
+                    firstEdge->prevEdge() = e;
+                }
+                prevEdge = e;
+                v0Itr->vertex().edges.push_back(e);
+            }
+            return f;
+        }
+
+        bool removeEdge(Edge* e)
+        {
+            auto origVert = e->origVert();
+            auto edgeInVerts = vertex(origVert).edges.find(e);
+            if (edges != vertex(origVert).edges.end())
+            {
+                vertex(origVert).edges.erase(edgeInVerts);
+            }
+            if (e->mate)
+            {
+                e->mate->mate = nullptr;
+            }
+            if (auto prev = e->prevEdge())
+            {
+                prev->nextEdge() = nullptr;
+            }
+            if (auto next = e->nextEdge())
+            {
+                next->prevEdge() = nullptr;
+            }
+            return true;
+        }
+
+        bool removeFace(Face* f)
+        {
+            Edge* firstEdge = f->edge;
+            for (Edge* edge = firstEdge->nextEdge(); edge != firstEdge; edge = edge->nextEdge())
+            {
+                removeEdge(edge);
+            }
+            removeEdge(firstEdge);
+        }
+
+        std::vector<VIndex> getFaceVertices(Face* f)
+        {
+            std::vector<VIndex> result;
+            result.push_back(f->edge->origVert());
+            for (Edge* faceEdge = f->edge->nextEdge();
+                 faceEdge != f->edge;
+                 faceEdge = faceEdge->nextEdge())
+            {
+                result.push_back(faceEdge->origVert());
+            }
+        
+        }
+
+        // Create new faces using a new vertex in the face
+        void subdivideFace(Face* f, VIndex& v)
+        {
+            std::vector<VIndex> faceVerts = getFaceVertices(f);
+            removeFace(f);
+            // Add back the triangles created by the subdivision.
+            for (auto v0itr = faceVerts.begin(); v0itr != faceVerts.end(); ++v0Itr)
+            {
+                auto v1Itr = v0Itr + 1;
+                if (vItr == faceVerts.end())
+                {
+                    v1Itr = faceVerts.begin();
+                }
+                auto varray[] = {v, *v0Itr, *v1Itr};
+                addFace(&varray[0], &varray[3]);
+            }
+        }
+
+        // Split an edge with a vertex connecting it to another vertex
+        // on the same face as the edge. Then subdivide the face on the
+        // other side of the edge.
+
+        void splitOneFace(std::vector<VIndex>& faceVerts, VIndex origVert, VIndex destVert, VIndex newVert,
+                          std::vector<VIndex>& out0, std::vector<VIndex>& out1)
+        {
+            auto ovItr = std::find(faceVerts.begin(), faceVerts.end(), origVert);
+            if (ovItr == faceVerts.begin())
+            {
+                out0.push_back(faceVerts.back());
+            }
+            else
+            {
+                out0.push_back(*(ovItr - 1));
+            }
+            out0.push_back(origVert);
+            out0.push_back(newVert);
+            out1.push_back(newVert);
+            // Now all the way back to origVert, perhaps going around the
+            // Horn
+            auto out1VertItr = ovItr + 1; // points at destVert or faceVerts.end()
+            if (out1VertItr != faceVerts.end())
+            {
+                out1.push_back(*out1VertItr);
+            }
+            for (++out1VertItr; out1VertItr != faceVerts.end() && out1VertItr != ovItr; ++out1VertItr)
+            {
+                out1.push_back(*out1VertItr);
+            }
+            if (out1VertItr == faceVerts.end())
+            {
+                for (out1VertItr == faceVerts.begin(); out1VertItr != ovItr; ++ out1VertItr)
+                {
+                    out1.push_back(*out1VertItr);
+                }
+            }
+            // Now out1VertItr should point at origVert
+            out1.push_back(origVert);
+        }
+    
+        void splitEdge(Edge* e, VIndex& v)
+        {
+            VIndex origVert = e->origVert();
+            VIndex destVert = e->destVert();
+            std::vector<VIndex> faceVerts;
+            std::vector<VIndex> otherFaceVerts; // The face across the edge
+            // Vertices for new faces
+            std::vector<VIndex> newFaces[4];
+            Face* oldFace = e->face, oldOtherFace = nullptr;
+            faceVerts = getFaceVertices(e->face);
+            splitOneFace(faceVerts, origVert, destVert, v, newFaces[0], newFaces[1]);
+            if (e->mate)
+            {
+                oldOtherFace = e->mate->face;
+                otherFaceVerts = getFaceVertices(oldOtherFace);
+                splitOneFace(otherFaceVerts, destVert, origVert, v, newFaces[2], newFaces[3]);
+            }
+            removeFace(oldFace);
+            if (oldOtherFace)
+            {
+                removeFace(oldOtherFace);
+            }
+            for (int i = 0; i < 4; ++i)
+            {
+                if (!newFaces[i].empty)
+                {
+                    addFace(newFaces[i].begin(), newFaces[i].end);
+                }
+            }
+        }
+
+        void addGeometry(const osg::Geometry* geom)
+        {
+            const osg::Geometry::PrimitiveSetList& primSets = geom->getPrimitiveSetList();
+            osg::Vec3Array* verts = dynamic_cast<osg::Vec3Array*>(geom->getVertexArray());
+            for (primSet : primSets)
+            {
+                osg::DrawElementsUShort* de = dynamic_cast<osg::DrawElementsUShort*>(primSet.get());
+                if (de && de->getMode == osg::PrimitiveSet::TRIANGLES)
+                {
+                    Coord coords[3];
+                    VIndex vtx[3];
+                    for (int i = 0; i < de->getNumIndices(); i += 3)
+                    {
+                        coords[i] = (*verts)[de->index(i)];
+                        vtx[i] = getVertex(coords[i]);
+                    }
+                    addFace(&vtx[0], &vtx[3]);
+                }
+            }
+        }
+        
+        bool isPointInFace(const Face* f, const Coord& pt);
+        {
+            std::vector<VIndex> faceVerts = getFaceVertices(f);
+            std::vector<osg::Vec3d> coordVec(faceVerts.size());
+            std::transform(faceVerts.begin(), faceVerts.end(), coordVec.begin(), coordinate);
+            return pointInPoly2d(pt, coordVec.begin(), coordVec.end());
+        }
+        // Find the face that contains the point
+        Face* getFaceContainingPoint(const Coord& pt)
+        {
+            // XXX Slow version
+            for (auto face : faces)
+            {
+                if (face && isPointInFace(face, pt))
+                {
+                    return face;
+                }
+            }
+            return nullptr;
+        }
+
+        bool vertsShareEdge(VIndex& v0, VIndex& v1)
+        {
+            for (auto& edge : vertex(v0).edges)
+            {
+                if (edge.destVert() == v1)
+                    return true;
+            }
+            for (auto& edge : vertex(v1).edges)
+            {
+                if (edge.destVert() == v0)
+                    return true;
+            }
+            return false;
+        }
+
+        Edge* intersectFaceSegment(Face* face, Segment2d& seg, Coord& intersection)
+        {
+            Edge* edge = face->edge;
+            do
+            {
+                Segment2d edgeSeg(coordinate(edge->origVert()), coordinate(edge->destVert()));
+                if (seg.intersect(edgeSeg, intersection))
+                {
+                    return edge;
+                }
+                edge = edge->nextEdge();
+            }
+            while (edge != face->edge);
+            return nullptr;
+        }
+
+        bool cutSegment(const Segment2d& segment)
+        {
+            // 1) End points must lie on mesh vertices. If they don't
+            // add those vertices.
+            VIndex a = getVertex(segment._a);
+            VIndex b = getVertex(segment._b);
+            if (vertex(a).edges.empty())
+            {
+                Face aFace = getFaceContainingPoint(coordinate(a));
+                subdivideFace(aFace);
+            }
+            if (vertex(b).edges.empty())
+            {
+                Face bFace = getFaceContainingPoint(coordinate(a));
+                subdivideFace(bFace);
+            }
+            VIndex current = a;
+            // Proceed through the mesh along the mesh, attempting to
+            // create an edge from our current vertex to the segment
+            // end point.
+            while (!vertsShareEdge(current, b))
+            {
+                Segment2d currSeg(coordinate(current), coordinate(b));
+                // Look in adjacent faces for an edge that intersects
+                // the segment
+                Coord intersectPt;
+                Edge* intersectEdge = nullptr;
+                for (auto& edge : vertex(current).edges)
+                {
+                    Face* face = edge.f;
+                    if ((intersectEdge = intersectFaceSegment(face, currSeg, intersectPt)))
+                    {
+                        break;
+                    }
+                }
+                if (!intersectEdge)
+                {
+                    // Urk, couldn't find an edge
+                    return false;
+                }
+                current = getVertex(intersectPt);
+                splitEdge(intersectEdge, current);
+            }
+            return true;
+        }
+    };
+    
+    
+    }}
+#endif
