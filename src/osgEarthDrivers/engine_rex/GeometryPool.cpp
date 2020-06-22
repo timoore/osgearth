@@ -20,6 +20,7 @@
 #include <osgEarth/Locators>
 #include <osgEarth/NodeUtils>
 #include <osgEarth/TopologyGraph>
+#include <osgEarth/WingedEdgeMesh>
 #include <osg/Point>
 #include <osgUtil/MeshOptimizers>
 #include <cstdlib> // for getenv

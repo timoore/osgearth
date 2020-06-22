@@ -49,7 +49,7 @@ namespace osgEarth { namespace REX
     {
     public:
         MeshEditor(const TileKey& key, unsigned tileSize, const Map* map);
-        void::addEditGeometry(MeshEditLayer::EditVector *geometry);
+        void addEditGeometry(MeshEditLayer::EditVector *geometry);
         bool hasEdits()
         {
             return !_edits.empty();

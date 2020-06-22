@@ -43,7 +43,6 @@ namespace osgEarth
         public:
             META_LayerOptions(osgEarth, Options, Layer::Options);
             OE_OPTION(unsigned, minLevel);
-            OE_OPTION(MeshEditSourceOptions, driver);
             virtual Config getConfig() const;
         private:
             void fromConfig( const Config& conf );

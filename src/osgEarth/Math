@@ -210,8 +210,8 @@ namespace osgEarth
                                        float tolerance = 0.0f);
 
     // Winding number test; see http://geomalgorithms.com/a03-_inclusion.html
-    bool
     template<typename Pt, typename PtItr>
+    bool
     osgEarth::pointInPoly2d(const Pt& pt, const PtItr& begin, const PtItr& end, double tolerance)
     {
         int windingNum = 0;

@@ -27,6 +27,7 @@
 #include <osgEarth/Math>
 #include <algorithm>
 #include <vector>
+#include <deque>
 #include <set>
 #include <osg/Vec3>
 #include <osg/Geometry>
@@ -39,7 +40,7 @@ namespace osgEarth { namespace Util
     {
     };
     template<typename Coord, typename V = Empty, typename E = Empty, typename F = Empty>
-    class OSGEARTH_EXPORT WingedEdgeMesh : public osg::Object
+    class OSGEARTH_EXPORT WingedEdgeMesh : public osg::Referenced
     {
     public:
         class Edge;
@@ -48,17 +49,16 @@ namespace osgEarth { namespace Util
         //! Represents a single vertex in the topology graph
         class Vertex : public V
         {
-            Vertex(Edge* e = nullptr)
+            Vertex(const Coord& pos)
+                : position(pos)
             {
-                if (e)
-                {
-                    edges.push_back(e);
-                }
             }
+            Coord position;
             // All Edge objects that has this vertex as the starting vertex (origVert)
-            std::vector<Edge*> edges;
+            mutable std::vector<Edge*> edges;
         };
 
+        using VVec = std::vector<const Vertex*>;
         struct Face : public F
         {
             Face(Edge* e = nullptr)
@@ -80,51 +80,61 @@ namespace osgEarth { namespace Util
                 else
                     return lhs.y() < rhs.y();
             }
+
+            bool operator()(const Vertex& lhs, const Vertex& rhs) const
+            {
+                return (*this)(lhs.position, rhs.position);
+            }
+
+            bool operator()(const Vertex& lhs, const Coord& rhs) const
+            {
+                return (*this)(lhs.position, rhs);
+            }
+
+            bool operator()(const Coord& lhs, const Vertex& rhs) const
+            {
+                return (*this)(lhs, rhs.position);
+            }
         };
         
         //! One or more Vertex objects
-        typedef std::map<Vec3, Vertex, VertexCmp> VertexMap;
+        typedef std::set<Vertex, VertexCmp> VertexSet;
 
-        //! Iterator into a VertexMap, which serves as the "pointer to
-        //! Vertex"
-        typedef VertexMap::iterator VIndex;
-        
-
-        VIndex getVertex(const Coord& position)
+        const Vertex* getVertex(const Coord& position)
         {
-            return vertices.insert(Vertex()).first;
+            return &*vertices.emplace(position).first;
         }
+        
         // Half Edges surround faces in counter-clockwise order
         // The vertices are in order for the left face
         struct Edge : public E
         {
-            Edge(VIndex &vOrig, VIndex& vDest)
-                : mate(nullptr)
+            Edge(const Vertex* vOrig, const Vertex* vDest)
+                : mate(nullptr), f(nullptr)
             {
                 v[0] = vOrig;
                 v[1] = vDest;
-                f = nullptr;
                 e[0] = nullptr;
                 e[1] = nullptr;
             }
-            VIndex v[2];
+            const Vertex* v[2];
             // left face
             Face* f;
             // edges - prev, next edge on left face
-            Edge* e[2]
-            VIndex& origVert()
+            Edge* e[2];
+            const Vertex*& origVert()
             {
                 return v[0];
             }
-            VIndex origVert() const
+            const Vertex* origVert() const
             {
                 return v[0];
             }
-            VIndex& destVert()
+            const Vertex*& destVert()
             {
                 return v[1];
             }
-            VIndex destVert() const
+            const Vertex* destVert() const
             {
                 return v[1];
             }
@@ -148,50 +158,33 @@ namespace osgEarth { namespace Util
             Edge* mate;
         };
 
-        Edge* newEdge(VIndex& vOrig, VIndex& vDest)
+        Edge* newEdge(const Vertex* vOrig, const Vertex* vDest)
         {
-            edges.push_back(new Edge(vOrig, vDest));
-            return edges.back();
+            edges.emplace_back(vOrig, vDest);
+            return &edges.back();
         }
 
         Face* newFace(Edge* edge = nullptr)
         {
-            faces.push_back(new Face(edge));
-            return faces.back();
+            faces.emplace_back(edge);
+            return &faces.back();
         }
 
         ~WingedEdgeMesh()
         {
-            for (auto edge : edges)
-            {
-                delete edge;
-            }
-            for (auto face :faces)
-            {
-                delete face;
-            }
         }
-        VertexMap vertices;
-        std::vector<Edge*> edges;
-        std::vector<Face*> faces;
+        VertexSet vertices;
+        std::deque<Edge> edges;
+        std::deque<Face> faces;
 
-        const Coord& coordinate(const VIndex& vIndex)
-        {
-            return vIndex->first;
-        }
-
-        Vertex& vertex(const VIndex& vIndex)
-        {
-            return vIndex->second;
-        }
-    
+        // Create a Face from a list of Vertex*
         template<typename VItr>
         Face* addFace(VItr begin, VItr end)
         {
             Face* f = newFace();
             Edge* firstEdge = nullptr, prevEdge = nullptr;
             VItr first = begin;
-            // Set v0Itr to last vertec in new face
+            // Set v0Itr to last vertex in new face
             VItr v0Itr = end - 1, v1Itr = first;
             for (; v1Itr != end; v0Itr = v1Itr++)
             {
@@ -203,15 +196,15 @@ namespace osgEarth { namespace Util
                 e->face = f;
                 // Search for the matching half-edge. It's origin will be
                 // this edge's destination.
-                auto mateEdgeItr = std::find_if(v1Itr->edges.begin(), v1Itr->edges.end(),
-                                                [&v0Itr](const auto& vertEdge)
+                auto mateEdgeItr = std::find_if((*v1Itr)->edges.begin(), (*v1Itr)->edges.end(),
+                                                [v0Itr](const Edge* vertEdge)
                                                 {
-                                                    return *v0Itr == vertEdge.destVert();
+                                                    return *v0Itr == vertEdge->destVert();
                                                 });
-                if (mateEdgeItr != v1Itr->edges.end())
+                if (mateEdgeItr != (*v1Itr)->edges.end())
                 {
                     e->mate = *mateEdgeItr;
-                    mateEdgeItr->mate = e;
+                    (*mateEdgeItr)->mate = e;
                 }
                 if (!firstEdge)
                 {
@@ -228,7 +221,7 @@ namespace osgEarth { namespace Util
                     firstEdge->prevEdge() = e;
                 }
                 prevEdge = e;
-                v0Itr->vertex().edges.push_back(e);
+                (*v0Itr)->vertex().edges.push_back(e);
             }
             return f;
         }
@@ -236,10 +229,10 @@ namespace osgEarth { namespace Util
         bool removeEdge(Edge* e)
         {
             auto origVert = e->origVert();
-            auto edgeInVerts = vertex(origVert).edges.find(e);
-            if (edges != vertex(origVert).edges.end())
+            auto edgeInVerts = origVert->edges.find(e);
+            if (edges != origVert->edges.end())
             {
-                vertex(origVert).edges.erase(edgeInVerts);
+                origVert->edges.erase(edgeInVerts);
             }
             if (e->mate)
             {
@@ -264,11 +257,12 @@ namespace osgEarth { namespace Util
                 removeEdge(edge);
             }
             removeEdge(firstEdge);
+            return true;
         }
 
-        std::vector<VIndex> getFaceVertices(Face* f)
+        VVec getFaceVertices(Face* f)
         {
-            std::vector<VIndex> result;
+            VVec result;
             result.push_back(f->edge->origVert());
             for (Edge* faceEdge = f->edge->nextEdge();
                  faceEdge != f->edge;
@@ -276,23 +270,23 @@ namespace osgEarth { namespace Util
             {
                 result.push_back(faceEdge->origVert());
             }
-        
+            return result;
         }
 
         // Create new faces using a new vertex in the face
-        void subdivideFace(Face* f, VIndex& v)
+        void subdivideFace(Face* f, const Vertex* v)
         {
-            std::vector<VIndex> faceVerts = getFaceVertices(f);
+            auto faceVerts = getFaceVertices(f);
             removeFace(f);
             // Add back the triangles created by the subdivision.
-            for (auto v0itr = faceVerts.begin(); v0itr != faceVerts.end(); ++v0Itr)
+            for (auto v0Itr = faceVerts.begin(); v0Itr != faceVerts.end(); ++v0Itr)
             {
                 auto v1Itr = v0Itr + 1;
-                if (vItr == faceVerts.end())
+                if (v1Itr == faceVerts.end())
                 {
                     v1Itr = faceVerts.begin();
                 }
-                auto varray[] = {v, *v0Itr, *v1Itr};
+                const Vertex* varray[] = {v, *v0Itr, *v1Itr};
                 addFace(&varray[0], &varray[3]);
             }
         }
@@ -301,8 +295,8 @@ namespace osgEarth { namespace Util
         // on the same face as the edge. Then subdivide the face on the
         // other side of the edge.
 
-        void splitOneFace(std::vector<VIndex>& faceVerts, VIndex origVert, VIndex destVert, VIndex newVert,
-                          std::vector<VIndex>& out0, std::vector<VIndex>& out1)
+        void splitOneFace(VVec& faceVerts, const Vertex* origVert, const Vertex* destVert, const Vertex* newVert,
+                          VVec& out0, VVec& out1)
         {
             auto ovItr = std::find(faceVerts.begin(), faceVerts.end(), origVert);
             if (ovItr == faceVerts.begin())
@@ -329,7 +323,7 @@ namespace osgEarth { namespace Util
             }
             if (out1VertItr == faceVerts.end())
             {
-                for (out1VertItr == faceVerts.begin(); out1VertItr != ovItr; ++ out1VertItr)
+                for (out1VertItr = faceVerts.begin(); out1VertItr != ovItr; ++ out1VertItr)
                 {
                     out1.push_back(*out1VertItr);
                 }
@@ -338,14 +332,14 @@ namespace osgEarth { namespace Util
             out1.push_back(origVert);
         }
     
-        void splitEdge(Edge* e, VIndex& v)
+        void splitEdge(Edge* e, const Vertex* v)
         {
-            VIndex origVert = e->origVert();
-            VIndex destVert = e->destVert();
-            std::vector<VIndex> faceVerts;
-            std::vector<VIndex> otherFaceVerts; // The face across the edge
+            const Vertex* origVert = e->origVert();
+            const Vertex* destVert = e->destVert();
+            VVec faceVerts;
+            VVec otherFaceVerts; // The face across the edge
             // Vertices for new faces
-            std::vector<VIndex> newFaces[4];
+            VVec newFaces[4];
             Face* oldFace = e->face, oldOtherFace = nullptr;
             faceVerts = getFaceVertices(e->face);
             splitOneFace(faceVerts, origVert, destVert, v, newFaces[0], newFaces[1]);
@@ -362,9 +356,9 @@ namespace osgEarth { namespace Util
             }
             for (int i = 0; i < 4; ++i)
             {
-                if (!newFaces[i].empty)
+                if (!newFaces[i].empty())
                 {
-                    addFace(newFaces[i].begin(), newFaces[i].end);
+                    addFace(newFaces[i].begin(), newFaces[i].end());
                 }
             }
         }
@@ -373,30 +367,38 @@ namespace osgEarth { namespace Util
         {
             const osg::Geometry::PrimitiveSetList& primSets = geom->getPrimitiveSetList();
             osg::Vec3Array* verts = dynamic_cast<osg::Vec3Array*>(geom->getVertexArray());
-            for (primSet : primSets)
+            for (auto primSet : primSets)
             {
                 osg::DrawElementsUShort* de = dynamic_cast<osg::DrawElementsUShort*>(primSet.get());
-                if (de && de->getMode == osg::PrimitiveSet::TRIANGLES)
+                if (de && de->getMode() == osg::PrimitiveSet::TRIANGLES)
                 {
-                    Coord coords[3];
-                    VIndex vtx[3];
                     for (int i = 0; i < de->getNumIndices(); i += 3)
                     {
-                        coords[i] = (*verts)[de->index(i)];
-                        vtx[i] = getVertex(coords[i]);
+                        Coord coords[3];
+                        const Vertex* vtx[3];
+                        for (int j = 0; j <  3; ++j)
+                        {
+                            coords[j] = (*verts)[de->index(i + j)];
+                            vtx[j] = getVertex(coords[j]);
+                        }
+                        addFace(&vtx[0], &vtx[3]);
                     }
-                    addFace(&vtx[0], &vtx[3]);
                 }
             }
         }
         
-        bool isPointInFace(const Face* f, const Coord& pt);
+        bool isPointInFace(const Face* f, const Coord& pt)
         {
-            std::vector<VIndex> faceVerts = getFaceVertices(f);
+            VVec faceVerts = getFaceVertices(f);
             std::vector<osg::Vec3d> coordVec(faceVerts.size());
-            std::transform(faceVerts.begin(), faceVerts.end(), coordVec.begin(), coordinate);
+            std::transform(faceVerts.begin(), faceVerts.end(), coordVec.begin(),
+                           [](const Vertex* v)
+                           {
+                               return v->position;
+                           });
             return pointInPoly2d(pt, coordVec.begin(), coordVec.end());
         }
+        
         // Find the face that contains the point
         Face* getFaceContainingPoint(const Coord& pt)
         {
@@ -411,14 +413,14 @@ namespace osgEarth { namespace Util
             return nullptr;
         }
 
-        bool vertsShareEdge(VIndex& v0, VIndex& v1)
+        bool vertsShareEdge(const Vertex* v0, const Vertex* v1)
         {
-            for (auto& edge : vertex(v0).edges)
+            for (auto& edge : v0->edges)
             {
                 if (edge.destVert() == v1)
                     return true;
             }
-            for (auto& edge : vertex(v1).edges)
+            for (auto& edge : v1->edges)
             {
                 if (edge.destVert() == v0)
                     return true;
@@ -431,7 +433,7 @@ namespace osgEarth { namespace Util
             Edge* edge = face->edge;
             do
             {
-                Segment2d edgeSeg(coordinate(edge->origVert()), coordinate(edge->destVert()));
+                Segment2d edgeSeg(edge->origVert()->position, edge->destVert()->position);
                 if (seg.intersect(edgeSeg, intersection))
                 {
                     return edge;
@@ -446,19 +448,19 @@ namespace osgEarth { namespace Util
         {
             // 1) End points must lie on mesh vertices. If they don't
             // add those vertices.
-            VIndex a = getVertex(segment._a);
-            VIndex b = getVertex(segment._b);
-            if (vertex(a).edges.empty())
+            const Vertex* a = getVertex(segment._a);
+            const Vertex* b = getVertex(segment._b);
+            if (a->edges.empty())
             {
-                Face aFace = getFaceContainingPoint(coordinate(a));
+                Face* aFace = getFaceContainingPoint(a->position);
                 subdivideFace(aFace);
             }
-            if (vertex(b).edges.empty())
+            if (b->edges.empty())
             {
-                Face bFace = getFaceContainingPoint(coordinate(a));
+                Face bFace = getFaceContainingPoint(b->position);
                 subdivideFace(bFace);
             }
-            VIndex current = a;
+            const Vertex* current = a;
             // Proceed through the mesh along the mesh, attempting to
             // create an edge from our current vertex to the segment
             // end point.
@@ -469,9 +471,9 @@ namespace osgEarth { namespace Util
                 // the segment
                 Coord intersectPt;
                 Edge* intersectEdge = nullptr;
-                for (auto& edge : vertex(current).edges)
+                for (auto edge : current->edges)
                 {
-                    Face* face = edge.f;
+                    Face* face = edge->f;
                     if ((intersectEdge = intersectFaceSegment(face, currSeg, intersectPt)))
                     {
                         break;
