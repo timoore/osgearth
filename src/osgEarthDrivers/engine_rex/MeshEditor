@@ -33,6 +33,8 @@ namespace osgEarth { namespace REX
 {
     using namespace osgEarth;
 
+    class SharedGeometry;
+    
     struct EditGeometry
     {
         EditGeometry(MeshEditLayer::EditVector* geom,
@@ -54,6 +56,7 @@ namespace osgEarth { namespace REX
         {
             return !_edits.empty();
         }
+        bool createTileMesh(SharedGeometry* sharedGeom, unsigned tileSize);
     protected:
         std::vector<EditGeometry> _edits;
         const TileKey _key;

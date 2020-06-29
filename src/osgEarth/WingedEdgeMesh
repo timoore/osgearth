@@ -47,7 +47,7 @@ namespace osgEarth { namespace Util
         class Face;
 
         //! Represents a single vertex in the topology graph
-        class Vertex : public V
+        struct Vertex : public V
         {
             Vertex(const Coord& pos)
                 : position(pos)
@@ -97,7 +97,6 @@ namespace osgEarth { namespace Util
             }
         };
         
-        //! One or more Vertex objects
         typedef std::set<Vertex, VertexCmp> VertexSet;
 
         const Vertex* getVertex(const Coord& position)
@@ -182,7 +181,7 @@ namespace osgEarth { namespace Util
         Face* addFace(VItr begin, VItr end)
         {
             Face* f = newFace();
-            Edge* firstEdge = nullptr, prevEdge = nullptr;
+            Edge *firstEdge = nullptr, *prevEdge = nullptr;
             VItr first = begin;
             // Set v0Itr to last vertex in new face
             VItr v0Itr = end - 1, v1Itr = first;
@@ -193,7 +192,7 @@ namespace osgEarth { namespace Util
                 {
                     f->edge = e;
                 }
-                e->face = f;
+                e->f = f;
                 // Search for the matching half-edge. It's origin will be
                 // this edge's destination.
                 auto mateEdgeItr = std::find_if((*v1Itr)->edges.begin(), (*v1Itr)->edges.end(),
@@ -215,13 +214,13 @@ namespace osgEarth { namespace Util
                     e->prevEdge() = prevEdge;
                     prevEdge->nextEdge() = e;
                 }
-                if (v1Itr + 1 = end)
+                if (v1Itr + 1 == end)
                 {
                     e->nextEdge() = firstEdge;
                     firstEdge->prevEdge() = e;
                 }
                 prevEdge = e;
-                (*v0Itr)->vertex().edges.push_back(e);
+                (*v0Itr)->edges.push_back(e);
             }
             return f;
         }
@@ -229,8 +228,8 @@ namespace osgEarth { namespace Util
         bool removeEdge(Edge* e)
         {
             auto origVert = e->origVert();
-            auto edgeInVerts = origVert->edges.find(e);
-            if (edges != origVert->edges.end())
+            auto edgeInVerts = std::find(origVert->edges.begin(), origVert->edges.end(), e);
+            if (edgeInVerts != origVert->edges.end())
             {
                 origVert->edges.erase(edgeInVerts);
             }
@@ -246,21 +245,32 @@ namespace osgEarth { namespace Util
             {
                 next->prevEdge() = nullptr;
             }
+            e->mate = nullptr;
+            e->origVert() = nullptr;
+            e->destVert() = nullptr;
+            e->prevEdge() = nullptr;
+            e->nextEdge() = nullptr;
             return true;
         }
 
         bool removeFace(Face* f)
         {
             Edge* firstEdge = f->edge;
-            for (Edge* edge = firstEdge->nextEdge(); edge != firstEdge; edge = edge->nextEdge())
+            // Slightly tortured logic because the edge's members are
+            // all set to nullptr when it is removed.
+            Edge *edge = firstEdge, *nextEdge = nullptr;
+            do 
             {
+                nextEdge = edge->nextEdge();
                 removeEdge(edge);
+                edge = nextEdge;
             }
-            removeEdge(firstEdge);
+            while (edge); // or nextEdge != nullptr?
+            f->edge = nullptr;
             return true;
         }
 
-        VVec getFaceVertices(Face* f)
+        VVec getFaceVertices(const Face* f)
         {
             VVec result;
             result.push_back(f->edge->origVert());
@@ -340,12 +350,12 @@ namespace osgEarth { namespace Util
             VVec otherFaceVerts; // The face across the edge
             // Vertices for new faces
             VVec newFaces[4];
-            Face* oldFace = e->face, oldOtherFace = nullptr;
-            faceVerts = getFaceVertices(e->face);
+            Face* oldFace = e->f, *oldOtherFace = nullptr;
+            faceVerts = getFaceVertices(e->f);
             splitOneFace(faceVerts, origVert, destVert, v, newFaces[0], newFaces[1]);
             if (e->mate)
             {
-                oldOtherFace = e->mate->face;
+                oldOtherFace = e->mate->f;
                 otherFaceVerts = getFaceVertices(oldOtherFace);
                 splitOneFace(otherFaceVerts, destVert, origVert, v, newFaces[2], newFaces[3]);
             }
@@ -403,11 +413,11 @@ namespace osgEarth { namespace Util
         Face* getFaceContainingPoint(const Coord& pt)
         {
             // XXX Slow version
-            for (auto face : faces)
+            for (auto& face : faces)
             {
-                if (face && isPointInFace(face, pt))
+                if (face.edge && isPointInFace(&face, pt))
                 {
-                    return face;
+                    return &face;
                 }
             }
             return nullptr;
@@ -415,14 +425,14 @@ namespace osgEarth { namespace Util
 
         bool vertsShareEdge(const Vertex* v0, const Vertex* v1)
         {
-            for (auto& edge : v0->edges)
+            for (auto edge : v0->edges)
             {
-                if (edge.destVert() == v1)
+                if (edge->destVert() == v1)
                     return true;
             }
-            for (auto& edge : v1->edges)
+            for (auto edge : v1->edges)
             {
-                if (edge.destVert() == v0)
+                if (edge->destVert() == v0)
                     return true;
             }
             return false;
@@ -453,12 +463,12 @@ namespace osgEarth { namespace Util
             if (a->edges.empty())
             {
                 Face* aFace = getFaceContainingPoint(a->position);
-                subdivideFace(aFace);
+                subdivideFace(aFace, a);
             }
             if (b->edges.empty())
             {
-                Face bFace = getFaceContainingPoint(b->position);
-                subdivideFace(bFace);
+                Face* bFace = getFaceContainingPoint(b->position);
+                subdivideFace(bFace, b);
             }
             const Vertex* current = a;
             // Proceed through the mesh along the mesh, attempting to
@@ -466,7 +476,7 @@ namespace osgEarth { namespace Util
             // end point.
             while (!vertsShareEdge(current, b))
             {
-                Segment2d currSeg(coordinate(current), coordinate(b));
+                Segment2d currSeg(current->position, b->position);
                 // Look in adjacent faces for an edge that intersects
                 // the segment
                 Coord intersectPt;

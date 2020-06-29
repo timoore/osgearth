@@ -1,4 +1,11 @@
 #include "MeshEditor"
+#include "GeometryPool"
+
+#include <osgEarth/Locators>
+#include <osgEarth/Map>
+#include <osgEarth/Math>
+#include <osgEarth/WingedEdgeMesh>
+#include <algorithm>
 
 #define LC "[MeshEditor] "
 
@@ -6,8 +13,7 @@ using namespace osgEarth;
 using namespace osgEarth::REX;
 
 MeshEditor::MeshEditor(const TileKey& key, unsigned tileSize, const Map* map) :
-    _key( key ), _tileSize(tileSize), _ndcMin(DBL_MAX, DBL_MAX, DBL_MAX), _ndcMax(-DBL_MAX, -DBL_MAX, -DBL_MAX),
-    _tileLength(static_cast<double>(tileSize) - 1.0)
+    _key( key ), _tileSize(tileSize), _ndcMin(DBL_MAX, DBL_MAX, DBL_MAX), _ndcMax(-DBL_MAX, -DBL_MAX, -DBL_MAX)
 {
     MeshEditLayerVector editLayers;
     map->getLayers(editLayers);
@@ -28,7 +34,7 @@ void
 MeshEditor::addEditGeometry(MeshEditLayer::EditVector *geometry)
 {
     // Make a "locator" for this key so we can do coordinate conversion:
-    GeoLocator geoLocator(_key.getExtent());n
+    GeoLocator geoLocator(_key.getExtent());
 
     if ( geometry )
     {
@@ -57,11 +63,139 @@ MeshEditor::addEditGeometry(MeshEditLayer::EditVector *geometry)
                 _ndcMax.y() = std::max(_ndcMax.y(), max_ndc.y());
 
             }
-
-
             // and add this mask to the list.
-            _edits.push_back(EditGeometry())
-            _maskRecords.push_back( MaskRecord(boundary, min_ndc, max_ndc, 0L) );
+            _edits.push_back(EditGeometry(geometry, min_ndc, max_ndc));
         }
     }
+}
+
+struct TileVertex
+{
+    mutable bool isBorder = false;
+    mutable int meshIndex = -1;
+};
+
+using TileMesh = WingedEdgeMesh<osg::Vec3d, TileVertex>;
+
+bool
+MeshEditor::createTileMesh(SharedGeometry* sharedGeom, unsigned tileSize)
+{
+    // Establish a local reference frame for the tile:
+    osg::Vec3d centerWorld;
+    GeoPoint centroid;
+    _key.getExtent().getCentroid( centroid );
+    centroid.toWorld( centerWorld );
+    osg::Matrix world2local, local2world;
+    centroid.createWorldToLocal( world2local );
+    local2world.invert( world2local );
+    // Attempt to calculate the number of verts in the surface geometry.
+    bool needsSkirt = false; // _options.heightFieldSkirtRatio() > 0.0f;
+    GeoLocator locator(_key.getExtent());
+    auto tileSRS = _key.getExtent().getSRS();
+
+    // Add one row at a time to the mesh. We will make triangles from
+    // two rows as we go along.
+
+    TileMesh wmesh;
+    using RowVec = std::vector<const TileMesh::Vertex*>;
+    RowVec topRow;
+    for(unsigned row=0; row<tileSize; ++row)
+    {
+        float ny = (float)row/(float)(tileSize-1);
+        RowVec bottomRow;
+        for(unsigned col=0; col<tileSize; ++col)
+        {
+            float nx = (float)col/(float)(tileSize-1);
+            osg::Vec3d unit(nx, ny, 0.0f);
+            osg::Vec3d model;
+            osg::Vec3d modelLTP;
+            locator.unitToWorld(unit, model);
+            modelLTP = model*world2local;
+            const TileMesh::Vertex* v = wmesh.getVertex(modelLTP);
+            v->isBorder = (row == 0 || row == tileSize - 1
+                           || col == 0 || col == tileSize -1);
+            bottomRow.push_back(v);
+            // The mesh triangles
+            if (row > 0 && col > 0)
+            {
+                const TileMesh::Vertex* t0[3] = {topRow[col - 1], bottomRow[col - 1], bottomRow[col]};
+                const TileMesh::Vertex* t1[3] = {topRow[col - 1], bottomRow[col], topRow[col]};
+                wmesh.addFace(&t0[0], &t0[3]);
+                wmesh.addFace(&t1[0], &t1[3]);
+            }
+        }
+        std::swap(topRow, bottomRow);
+    }
+    // Make the cuts
+    for (auto& editGeometry : _edits)
+    {
+        for ( auto arrayPtr : *editGeometry.geometry)
+        {
+            // Cut in the segments
+            if (arrayPtr->empty())
+                continue;
+            // Get points into tile coordinate system
+            std::vector<osg::Vec3d> tileLocalPts;
+            std::transform(arrayPtr->begin(), arrayPtr->end(), std::back_inserter(tileLocalPts),
+                           [tileSRS,&world2local](const osg::Vec3d& worldPt)
+                           {
+                               osg::Vec3d result;
+                               tileSRS->transformToWorld(worldPt, result);
+                               return result * world2local;
+                           });
+            for (auto v0Itr = tileLocalPts.begin(), v1Itr = v0Itr + 1;
+                 v1Itr != tileLocalPts.end();
+                 v0Itr = v1Itr++)
+            {
+                Segment2d segment(*v0Itr, *v1Itr);
+                wmesh.cutSegment(segment);
+            }
+        }
+    }
+    // We have an edited mesh, now turn it back into something OSG can
+    // render.
+    int vertexIndex = 0;
+    using Vec3Ptr = osg::ref_ptr<osg::Vec3Array>;
+    Vec3Ptr verts = dynamic_cast<osg::Vec3Array*>(sharedGeom->getVertexArray());
+    Vec3Ptr normals = dynamic_cast<osg::Vec3Array*>(sharedGeom->getNormalArray());
+    Vec3Ptr texCoords = dynamic_cast<osg::Vec3Array*>(sharedGeom->getTexCoordArray());
+    for (auto& meshVertex : wmesh.vertices)
+    {
+        meshVertex.meshIndex = vertexIndex++;
+        verts->push_back(meshVertex.position); // convert to Vec3
+        // Back to tile unit coords
+        osg::Vec3d worldPos = meshVertex.position * local2world;
+        osg::Vec3d unit;
+        locator.worldToUnit(worldPos, unit);
+        if (texCoords.valid())
+        {
+            texCoords->push_back(osg::Vec3f(unit.x(), unit.y(), VERTEX_MARKER_GRID));
+        }
+        unit.z() = 1.0f;
+        osg::Vec3d modelPlusOne;
+        locator.unitToWorld(unit, modelPlusOne);
+        osg::Vec3d normal = (modelPlusOne*world2local)-meshVertex.position;
+        normal.normalize();
+        normals->push_back(normal);
+        // Neighbors for morphing... or something else?
+        // XXX skirts
+    }
+    osg::ref_ptr<osg::DrawElements> primSet(new osg::DrawElementsUShort(GL_TRIANGLES));
+    primSet->reserveElements(wmesh.faces.size() * 3);
+    for (auto& face : wmesh.faces)
+    {
+        auto faceVerts = wmesh.getFaceVertices(&face);
+        if (faceVerts.size() > 3)
+        {
+            OE_NOTICE << "face with " << faceVerts.size() << " vertices\n";
+        }
+        else
+        {
+            for (auto vertPtr : faceVerts)
+            {
+                primSet->addElement(vertPtr->meshIndex);
+            }
+        }
+    }
+    return true;
 }

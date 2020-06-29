@@ -17,6 +17,7 @@
 * along with this program.  If not, see <http://www.gnu.org/licenses/>
 */
 #include "GeometryPool"
+#include "MeshEditor"
 #include <osgEarth/Locators>
 #include <osgEarth/NodeUtils>
 #include <osgEarth/TopologyGraph>
@@ -418,6 +419,12 @@ GeometryPool::createGeometry(const TileKey& tileKey,
 
     GeoLocator locator(tileKey.getExtent());
 
+    if (editor)
+    {
+        editor->createTileMesh(geom, tileSize);
+        return geom.release();
+    }
+
     osg::Vec3d unit;
     osg::Vec3d model;
     osg::Vec3d modelLTP;
@@ -491,12 +498,7 @@ GeometryPool::createGeometry(const TileKey& tileKey,
     // By default we tessellate the surface, but if there's a masking set
     // it might replace some or all of our surface geometry.
     bool tessellateSurface = true;
-    if (editor)
-    {
-        WingedEdgeMesh<osg::Vec3> wmesh;
-        
-    }
-    else if (maskSet)
+    if (maskSet)
     {
         // The mask generator adds to the passed-in arrays as necessary,
         // and then returns a new primtive set containing all the new triangles.
