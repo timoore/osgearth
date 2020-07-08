@@ -6,6 +6,7 @@
 #include <osgEarth/Math>
 #include <osgEarth/WingedEdgeMesh>
 #include <algorithm>
+#include <iostream>
 
 #define LC "[MeshEditor] "
 
@@ -198,4 +199,16 @@ MeshEditor::createTileMesh(SharedGeometry* sharedGeom, unsigned tileSize)
         }
     }
     return true;
+}
+
+extern "C" void pfvs(void* vMesh, void* vFace)
+{
+    TileMesh* mesh = static_cast<TileMesh*>(vMesh);
+    TileMesh::Face* face = static_cast<TileMesh::Face*>(vFace);
+    auto faceVerts = mesh->getFaceVertices(face);
+    for (auto vert: faceVerts)
+    {
+        std::cout << std::hex << vert << ": " << vert->position.x() << " " << vert->position.y() << '\n';
+        
+    }
 }

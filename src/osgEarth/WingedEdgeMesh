@@ -302,8 +302,10 @@ namespace osgEarth { namespace Util
         }
 
         // Split an edge with a vertex connecting it to another vertex
-        // on the same face as the edge. Then subdivide the face on the
-        // other side of the edge.
+        // on the same face as the edge.
+        //
+        // Handle the case where newVert is part of the split edge
+        // i.e., equal to origVert or destVert.
 
         void splitOneFace(VVec& faceVerts, const Vertex* origVert, const Vertex* destVert, const Vertex* newVert,
                           VVec& out0, VVec& out1)
@@ -454,9 +456,30 @@ namespace osgEarth { namespace Util
             return nullptr;
         }
 
+        Edge* intersectFaceSegment(Face* face, const Vertex* a, const Vertex* b, Coord& intersection)
+        {
+            const Segment2d seg(a->position, b->position);
+            Edge* edge = face->edge;
+            do
+            {
+                if (!(a == edge->origVert() || a == edge->destVert()
+                      || b == edge->origVert() || b == edge->destVert()))
+                {
+                    Segment2d edgeSeg(edge->origVert()->position, edge->destVert()->position);
+                    if (seg.intersect(edgeSeg, intersection))
+                    {
+                        return edge;
+                    }
+                }
+                edge = edge->nextEdge();
+            }
+            while (edge != face->edge);
+            return nullptr;
+        }
+
         bool cutSegment(const Segment2d& segment)
         {
-            // 1) End points must lie on mesh vertices. If they don't
+            // 1) End points must lie on mesh vertices. If they don't,
             // add those vertices.
             const Vertex* a = getVertex(segment._a);
             const Vertex* b = getVertex(segment._b);
@@ -474,9 +497,8 @@ namespace osgEarth { namespace Util
             // Proceed through the mesh along the mesh, attempting to
             // create an edge from our current vertex to the segment
             // end point.
-            while (!vertsShareEdge(current, b))
+            while (!(current == b || vertsShareEdge(current, b)))
             {
-                Segment2d currSeg(current->position, b->position);
                 // Look in adjacent faces for an edge that intersects
                 // the segment
                 Coord intersectPt;
@@ -484,7 +506,7 @@ namespace osgEarth { namespace Util
                 for (auto edge : current->edges)
                 {
                     Face* face = edge->f;
-                    if ((intersectEdge = intersectFaceSegment(face, currSeg, intersectPt)))
+                    if ((intersectEdge = intersectFaceSegment(face, current, b, intersectPt)))
                     {
                         break;
                     }
