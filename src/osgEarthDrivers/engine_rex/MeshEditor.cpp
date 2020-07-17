@@ -125,7 +125,6 @@ MeshEditor::createTileMesh(SharedGeometry* sharedGeom, unsigned tileSize)
         std::swap(topRow, bottomRow);
     }
     // Make the cuts
-#if 0
     for (auto& editGeometry : _edits)
     {
         for ( auto arrayPtr : *editGeometry.geometry)
@@ -151,7 +150,6 @@ MeshEditor::createTileMesh(SharedGeometry* sharedGeom, unsigned tileSize)
             }
         }
     }
-#endif
     // We have an edited mesh, now turn it back into something OSG can
     // render.
     int vertexIndex = 0;

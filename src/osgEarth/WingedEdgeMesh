@@ -507,10 +507,18 @@ namespace osgEarth { namespace Util
             if (a->edges.empty())
             {
                 aFace = getFaceContainingPoint(a->position);
+                if (aFace)
+                {
+                    subdivideFace(aFace, a);
+                }
             }
             if (b->edges.empty())
             {
                 bFace = getFaceContainingPoint(b->position);
+                if (bFace)
+                {
+                    subdivideFace(bFace, b);
+                }
             }
             if (aFace && bFace)
             {
