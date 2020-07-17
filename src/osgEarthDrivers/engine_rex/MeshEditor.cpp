@@ -50,10 +50,8 @@ MeshEditor::addEditGeometry(MeshEditLayer::EditVector *geometry)
 
             // true if boundary overlaps tile in X dimension:
             bool x_match = min_ndc.x() < 1.0 && max_ndc.x() >= 0.0;
-
             // true if boundary overlaps tile in Y dimension:
             bool y_match = min_ndc.y() < 1.0 && max_ndc.y() >= 0.0;
-
             if (x_match && y_match)
             {
                 // yes, boundary overlaps tile, so expand the global NDC bounding
@@ -62,10 +60,9 @@ MeshEditor::addEditGeometry(MeshEditLayer::EditVector *geometry)
                 _ndcMin.y() = std::min(_ndcMin.y(), min_ndc.y());
                 _ndcMax.x() = std::max(_ndcMax.x(), max_ndc.x());
                 _ndcMax.y() = std::max(_ndcMax.y(), max_ndc.y());
-
+                // and add this mask to the list.
+                _edits.push_back(EditGeometry(geometry, min_ndc, max_ndc));
             }
-            // and add this mask to the list.
-            _edits.push_back(EditGeometry(geometry, min_ndc, max_ndc));
         }
     }
 }
@@ -99,11 +96,11 @@ MeshEditor::createTileMesh(SharedGeometry* sharedGeom, unsigned tileSize)
 
     TileMesh wmesh;
     using RowVec = std::vector<const TileMesh::Vertex*>;
-    RowVec topRow;
+    RowVec bottomRow;
     for(unsigned row=0; row<tileSize; ++row)
     {
         float ny = (float)row/(float)(tileSize-1);
-        RowVec bottomRow;
+        RowVec topRow;
         for(unsigned col=0; col<tileSize; ++col)
         {
             float nx = (float)col/(float)(tileSize-1);
@@ -115,7 +112,7 @@ MeshEditor::createTileMesh(SharedGeometry* sharedGeom, unsigned tileSize)
             const TileMesh::Vertex* v = wmesh.getVertex(modelLTP);
             v->isBorder = (row == 0 || row == tileSize - 1
                            || col == 0 || col == tileSize -1);
-            bottomRow.push_back(v);
+            topRow.push_back(v);
             // The mesh triangles
             if (row > 0 && col > 0)
             {
@@ -128,6 +125,7 @@ MeshEditor::createTileMesh(SharedGeometry* sharedGeom, unsigned tileSize)
         std::swap(topRow, bottomRow);
     }
     // Make the cuts
+#if 0
     for (auto& editGeometry : _edits)
     {
         for ( auto arrayPtr : *editGeometry.geometry)
@@ -153,6 +151,7 @@ MeshEditor::createTileMesh(SharedGeometry* sharedGeom, unsigned tileSize)
             }
         }
     }
+#endif
     // We have an edited mesh, now turn it back into something OSG can
     // render.
     int vertexIndex = 0;
@@ -181,6 +180,7 @@ MeshEditor::createTileMesh(SharedGeometry* sharedGeom, unsigned tileSize)
         // Neighbors for morphing... or something else?
         // XXX skirts
     }
+    
     osg::ref_ptr<osg::DrawElements> primSet(new osg::DrawElementsUShort(GL_TRIANGLES));
     primSet->reserveElements(wmesh.faces.size() * 3);
     for (auto& face : wmesh.faces)
@@ -198,6 +198,7 @@ MeshEditor::createTileMesh(SharedGeometry* sharedGeom, unsigned tileSize)
             }
         }
     }
+    sharedGeom->setDrawElements(primSet);
     return true;
 }
 

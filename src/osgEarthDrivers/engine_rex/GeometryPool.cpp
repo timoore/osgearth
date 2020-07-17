@@ -352,7 +352,7 @@ GeometryPool::createGeometry(const TileKey& tileKey,
     local2world.invert( world2local );
 
     // Attempt to calculate the number of verts in the surface geometry.
-    bool needsSkirt = _options.heightFieldSkirtRatio() > 0.0f && false;
+    bool needsSkirt = _options.heightFieldSkirtRatio() > 0.0f;
 
     unsigned numVertsInSurface    = (tileSize*tileSize);
     unsigned numVertsInSkirt      = needsSkirt ? (tileSize-1)*2u * 4u : 0;
@@ -391,7 +391,7 @@ GeometryPool::createGeometry(const TileKey& tileKey,
 
     osg::ref_ptr<osg::Vec3Array> neighbors = 0L;
     osg::ref_ptr<osg::Vec3Array> neighborNormals = 0L;
-    if ( _options.morphTerrain() == true && false)
+    if ( _options.morphTerrain() == true)
     {
         // neighbor positions (for morphing)
         neighbors = new osg::Vec3Array();
@@ -419,7 +419,7 @@ GeometryPool::createGeometry(const TileKey& tileKey,
 
     GeoLocator locator(tileKey.getExtent());
 
-    if (editor)
+    if (editor && editor->hasEdits())
     {
         editor->createTileMesh(geom, tileSize);
         return geom.release();
