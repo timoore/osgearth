@@ -72,7 +72,7 @@ namespace osgEarth { namespace Util
 
         virtual void run(const Profile* mapProfile);
 
-        bool intersects( const GeoExtent& extent );    
+        bool intersects( const GeoExtent& extent ) const;
 
         void setTileHandler( TileHandler* handler );
 

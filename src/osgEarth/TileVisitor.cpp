@@ -60,7 +60,7 @@ void TileVisitor::addExtent( const GeoExtent& extent )
     _extents.push_back( extent );
 }
 
-bool TileVisitor::intersects( const GeoExtent& extent )
+bool TileVisitor::intersects( const GeoExtent& extent ) const
 {    
     if ( _extents.empty()) return true;
     else
