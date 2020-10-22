@@ -92,6 +92,38 @@ namespace osgEarth { namespace Contrib { namespace ThreeDTiles
     REGISTER_OSGPLUGIN(3dtiles, ThreeDTilesJSONReaderWriter);
 } } }
 
+ImplicitTileName::ImplicitTileName(int lod, uint64_t morton)
+    : lod(lod), x(0), y(0)
+{
+    int mx = 0;
+    int my = 0;
+    for (int i = 0; i < lod; ++i)
+    {
+        unsigned mask = 1 << (lod - 1 - i) * 2;
+        unsigned xdigit = morton >> ((lod - 1 - i) * 2) & 0x1;
+        unsigned ydigit = morton >> ((lod - 1 - i) * 2 + 1) & 0x1;
+        mx |= xdigit;
+        my |= ydigit;
+        mx = mx << 1;
+        my = my << 1;
+    }
+    x = mx;
+    y = my;
+}
+
+uint64_t ImplicitTileName::morton() const
+{
+
+    uint64_t result = 0;
+    for (int i = 0; i < lod; ++i)
+    {
+        result = result << 2;
+        result |= ((y << 1) >> (lod - 1 - i)) & 0x10;
+        result |= (x >> (lod - 1 - i)) & 0x1;
+    }
+    return result;
+
+}
 //........................................................................
 
 void
@@ -411,6 +443,7 @@ Tileset::fromJSON(const Json::Value& value, LoadContext& uc)
         geometricError() = value.get("geometricError", 0.0).asDouble();
     if (value.isMember("root"))
         root() = new Tile(value["root"], uc);
+    
 }
 
 Json::Value
@@ -683,6 +716,10 @@ ThreeDTileNode::ThreeDTileNode(ThreeDTilesetNode* tileset, Tile* tile, bool imme
         {
             _children = 0;
         }
+    }
+    else if (_tileset->implicit.get() && _tileset->hasChildren(tile))
+    {
+        
     }
 
     _debugColor = randomColor();

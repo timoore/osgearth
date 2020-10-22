@@ -53,6 +53,21 @@ namespace osgEarth { namespace Contrib { namespace ThreeDTiles
         URIContext _uc;
     };
 
+    struct ImplicitTileName
+    {
+        int lod;
+        int x;
+        int y;
+        ImplicitTileName()
+            : lod(0), x(0), y(0)
+        {}
+        ImplicitTileName(int lod, int x, int y)
+            : lod(lod), x(x), y(y)
+        {}
+        ImplicitTileName(int lod, uint64_t morton);
+        uint64_t morton() const;
+    };
+    
     class OSGEARTH_EXPORT Asset
     {
         OE_OPTION(std::string, version);
@@ -116,6 +131,8 @@ namespace osgEarth { namespace Contrib { namespace ThreeDTiles
         OE_OPTION(BoundingVolume, boundingVolume);
         OE_OPTION(double, geometricError);
         OE_OPTION_REFPTR(Tile, root);
+        OE_OPTION(bool, implicit);
+        // Assume quadtree for implicit tiling
 
         Tileset() { }
         Tileset(const Json::Value& value, LoadContext& uc) { fromJSON(value, uc); }

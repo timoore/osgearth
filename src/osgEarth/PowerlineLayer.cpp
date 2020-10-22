@@ -370,7 +370,7 @@ namespace
         double d;
     };
 
-    // Support around evaluating the catenary formula x = a * cosh((x + x1) / a) + C
+    // Support for evaluating the catenary formula x = a * cosh((x + x1) / a) + C
     // and solving for the parameters a,x1, and C given the arc length of the curve L and the
     // horizontal and vertical displacement of the endpoints.
     struct CatenaryFunc

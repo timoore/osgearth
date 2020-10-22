@@ -22,5 +22,6 @@ http://readymap.org
 		 <vdatum>egm96</vdatum>
 	 </TMSElevation>
 
+         <DebugImage/>
     <xi:include href="viewpoints.xml"/>
 </map>
